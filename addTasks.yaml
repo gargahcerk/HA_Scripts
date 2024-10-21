@@ -1,0 +1,93 @@
+- alias: Trigger Script
+  description: >-
+    This script will start the initial question for adding tasks to todoist.
+  triggers:
+    - trigger: # your trigger
+  actions:
+    - alias: What can I put on your shopping list?
+      action: script.activate_alexa_actionable_notification
+      metadata: {}
+      data:
+        text: Shall I write something on your shopping list?
+        event_id: add_task
+        alexa_device: "{{ states('sensor.last_alexa') }}"
+        suppress_confirmation: true
+  mode: single
+- alias: ResponseYES
+  description: >-
+    This script handles positive answers to the question whether Alexa should add something to your shopping list.
+  triggers:
+    - trigger: event
+      event_type: alexa_actionable_notification
+      event_data:
+        event_id: add_task
+  conditions:
+    - condition: template
+      value_template: "{{ response_type == 'ResponseYes' }}"
+  actions:
+    - action: script.activate_alexa_actionable_notification
+      metadata: {}
+      data:
+        text: What should I write on the list?
+        event_id: shopping_list_items
+        alexa_device: "{{ states('sensor.last_alexa') }}"
+  mode: single
+  variables:
+    response_type: "{{ trigger.event.data.event_response_type }}"
+    response: "{{ trigger.event.data.event_response }}"
+- alias: Adding items
+  description: >-
+    In this script, the named tasks/entries that are to be added to the list are processed and added to the list.
+  triggers:
+    - event_type: alexa_actionable_notification
+      event_data:
+        event_id: shopping_list_items
+      trigger: event
+    - event_type: alexa_actionable_notification
+    event_data:
+      event_id: add_task # if they answer directly with the items instead of 'yes, i want to add items' - 'okay what items though?' - 'eggs,milk,...'
+    trigger: event
+  conditions:
+    - condition: template
+      value_template: "{{ response_type == 'ResponseString' }}"
+  actions:
+    - data:
+        agent_id: # your AgentID
+        text: >-
+          Create a shopping list in the form [item1,item2,item3,...] from input. Please answer with a list in square brackets and separate all items with a comma without spaces. Never use a tally list and never answer with a confirmation. Always answer with a list in square brackets!!!  Example 
+          > Input > Potatoes, flour and two tins of kidney beans 
+          Response > [potatoes,flour,2 cans of kidney beans]
+
+          Here is your input > Input > {{ response }}
+      response_variable: chatGPT
+      action: conversation.process
+    - variables:
+        words: >
+          {{ chatGPT.response.speech.plain.speech |
+          regex_findall_index('\\[(.*?)\\]') }}
+    - data:
+        message: "{{ chatGPT.response.speech.plain.speech }}"
+        title: Debugging Words
+      action: persistent_notification.create
+    - repeat:
+        for_each: "{{ words.split(',')}}"
+        sequence:
+          - data:
+              project: Shoppinglist
+              labels: HomeAssistant
+              content: "{{ repeat.item }}"
+            action: todoist.new_task
+    - action: script.activate_alexa_actionable_notification
+      metadata: {}
+      data:
+        text: I've written {{ words }} on your shopping list. Anything else?
+        event_id: shopping_list_items
+        alexa_device: "{{ states('sensor.last_alexa') }}"
+      alias: Anything else?
+  variables:
+    response_type: "{{ trigger.event.data.event_response_type }}"
+    response: "{{ trigger.event.data.event_response }}"
+  mode: single
+
+
+
